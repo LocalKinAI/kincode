@@ -2,7 +2,8 @@
 name: "kincode"
 brain:
   provider: "ollama"
-  model: "kimi-k2.6:cloud"
+  model: "ornith-1.5:35b"                                    # 2026-09-05: Jacky's model on the LAN box
+  endpoint: "http://192.168.0.21:11434/v1/chat/completions"  # (was kimi-k2.6:cloud via laptop Ollama)
   temperature: 0.3
   context_length: 131072
 rules:
