@@ -310,6 +310,10 @@ func main() {
 	// without ever asking is not a default anyone chose — it was a
 	// stopgap that outlived its reason.
 	var undoStore *checkpoint.Store
+	// Background tasks are children of this process; leaving them
+	// running after it exits would leak servers nobody can see.
+	defer tools.KillAll()
+
 	perms := permission.New(*yolo)
 	if !*yolo {
 		mode := permission.ModeAuto
@@ -564,6 +568,15 @@ func runServe(ctx context.Context, a *agent.Agent, port int, providerName, model
 	// mid-turn, unlike plan mode: "stop asking me, I'm watching" is
 	// decided while watching a turn, and the next tool call reads it.
 	srv.SetRepoChangedHandler(func(dir string) {
+		// A dev server for the project we just left has no business
+		// still holding a port, and a `cd` into its subdirectory is a
+		// path that no longer exists here.
+		tools.KillAll()
+		if t, err := a.Tools().Get("bash"); err == nil {
+			if bt, ok := t.(*tools.BashTool); ok {
+				bt.ResetDir()
+			}
+		}
 		a.SetRepoContext(agent.RepoContext(dir))
 		// Undo is per project: the snapshots for the folder we just
 		// left must not be offered as "undo" in the one we arrived in.

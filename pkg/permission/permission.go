@@ -33,6 +33,9 @@ var readOnlyToolsForPlanMode = map[string]bool{
 	"file_read": true,
 	"glob":      true,
 	"grep":      true,
+	// Reading a background task's log is reading. Denying it would mean
+	// a task started before plan mode went on becomes unobservable.
+	"bash_output": true,
 	// The git tool only reads. Reading the diff and the recent history
 	// is most of what planning a change consists of, and denying it in
 	// plan mode left the agent planning blind — bash is denied, so

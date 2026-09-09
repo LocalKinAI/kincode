@@ -330,6 +330,10 @@ func (a *Agent) SetRepoContext(rc string) {
 	}
 }
 
+// Tools exposes the registry so the server can reach a specific tool —
+// telling bash to forget its accumulated `cd` when the repo changes.
+func (a *Agent) Tools() *tools.Registry { return a.tools }
+
 // SetUndoStore installs (or replaces) the checkpoint store — replaced
 // when the user switches repos, since undo is per-project.
 func (a *Agent) SetUndoStore(s *checkpoint.Store) { a.undo = s }

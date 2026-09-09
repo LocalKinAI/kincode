@@ -76,6 +76,7 @@ func (r *Registry) Defs() []provider.ToolDef {
 // RegisterDefaults registers all built-in tools.
 func RegisterDefaults(r *Registry) {
 	r.Register(&BashTool{})
+	r.Register(&BashOutputTool{})
 	r.Register(&FileReadTool{})
 	r.Register(&FileWriteTool{})
 	r.Register(&FileEditTool{})
