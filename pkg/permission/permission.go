@@ -30,9 +30,14 @@ type Manager struct {
 // model knows to stay in research/planning mode and emit a markdown
 // plan instead of starting to modify.
 var readOnlyToolsForPlanMode = map[string]bool{
-	"file_read":  true,
-	"glob":       true,
-	"grep":       true,
+	"file_read": true,
+	"glob":      true,
+	"grep":      true,
+	// The git tool only reads. Reading the diff and the recent history
+	// is most of what planning a change consists of, and denying it in
+	// plan mode left the agent planning blind — bash is denied, so
+	// there was no other way to see what had already changed.
+	"git":        true,
 	"web_fetch":  true,
 	"web_search": true,
 }

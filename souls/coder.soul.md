@@ -2,8 +2,13 @@
 name: "kincode"
 brain:
   provider: "ollama"
-  model: "ornith-1.5:35b"                                    # 2026-09-05: Jacky's model on the LAN box
-  endpoint: "http://192.168.0.21:11434/v1/chat/completions"  # (was kimi-k2.6:cloud via laptop Ollama)
+  # 2026-09-09: 回本机 Ollama 上的 kimi。LAN 盒子 (192.168.0.21) 上的
+  # ornith-1.5:35b 更快也更私密,但它今天挂了三次 —— 每次挂掉 kincode 就是
+  # 一个字都答不出来。而且实测 ornith 在需要精确操作的编码任务上会乱转
+  # (读不存在的路径、glob、pwd,就是不编辑)。默认要选一个开机就在、又跟得上
+  # 工具调用的。想切回去:右下角模型菜单 → Source → 192.168.0.21。
+  model: "kimi-k2.6:cloud"
+  endpoint: "http://localhost:11434/v1/chat/completions"
   temperature: 0.3
   context_length: 131072
 # ── 审批门 ──

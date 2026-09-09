@@ -82,6 +82,7 @@ func RegisterDefaults(r *Registry) {
 	r.Register(&MultiEditTool{})
 	r.Register(&GlobTool{})
 	r.Register(&GrepTool{})
+	r.Register(&GitTool{})
 	r.Register(&WebFetchTool{})
 	r.Register(&WebSearchTool{})
 	r.Register(&MemoryTool{})

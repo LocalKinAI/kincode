@@ -160,6 +160,7 @@ type Server struct {
 	stateHandler     StateHandler
 	planModeHandler  PlanModeHandler
 	permModeHandler  PermissionModeHandler
+	repoChanged      func(dir string)
 	asks             *askWaiters
 
 	mu   sync.Mutex
@@ -211,6 +212,10 @@ func (s *Server) SetPlanModeHandler(h PlanModeHandler) { s.planModeHandler = h }
 // PermissionModeHandler switches the approval gate between "auto" and
 // "ask" and returns the mode actually in force.
 type PermissionModeHandler func(mode string) string
+
+// SetRepoChangedHandler is called after POST /api/repo has chdir'd,
+// so the agent can re-derive anything it knows about the repo.
+func (s *Server) SetRepoChangedHandler(f func(dir string)) { s.repoChanged = f }
 
 // SetPermissionModeHandler wires POST /api/permission_mode.
 func (s *Server) SetPermissionModeHandler(h PermissionModeHandler) { s.permModeHandler = h }
@@ -339,6 +344,12 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	if err := os.Chdir(abs); err != nil {
 		http.Error(w, "chdir failed: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// The agent's system prompt describes the repo it is in — branch,
+	// uncommitted files, recent commits. That paragraph is now about
+	// the wrong project.
+	if s.repoChanged != nil {
+		s.repoChanged(abs)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"repo": abs})

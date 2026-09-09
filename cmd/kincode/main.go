@@ -330,6 +330,14 @@ func main() {
 			len(memory))
 	}
 
+	// Where are we. Four rounds of pwd / ls / git status / git log at
+	// the top of every session, to learn what the harness could just
+	// say — and an agent that skips the ritual edits files with the
+	// user's uncommitted work in them.
+	if rc := agent.RepoContext(""); rc != "" {
+		systemPrompt += rc
+	}
+
 	// Create agent.
 	a := agent.New(agent.Config{
 		Provider:     p,
@@ -541,6 +549,10 @@ func runServe(ctx context.Context, a *agent.Agent, port int, providerName, model
 	// POST /api/permission_mode — switch the gate mid-session. Allowed
 	// mid-turn, unlike plan mode: "stop asking me, I'm watching" is
 	// decided while watching a turn, and the next tool call reads it.
+	srv.SetRepoChangedHandler(func(dir string) {
+		a.SetRepoContext(agent.RepoContext(dir))
+	})
+
 	srv.SetPermissionModeHandler(func(mode string) string {
 		g := a.Permissions().Gate()
 		if g == nil {

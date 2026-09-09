@@ -295,6 +295,32 @@ func (a *Agent) RunWithEvents(ctx context.Context, userMessage string, ev Events
 	return a.RunWithImagesAndEvents(ctx, userMessage, nil, ev)
 }
 
+// SetRepoContext replaces the "## This repository" paragraph in the
+// system prompt.
+//
+// The prompt is assembled once at boot, but the repo is not fixed: the
+// desktop shell chdirs the process whenever the user picks another
+// folder, and a prompt still describing the previous project's branch
+// and dirty files is worse than none — it is confidently wrong. Called
+// on every repo switch, it swaps the paragraph and leaves the persona
+// alone.
+func (a *Agent) SetRepoContext(rc string) {
+	const marker = "\n\n## This repository\n"
+	base := a.systemPrompt
+	if i := strings.Index(base, marker); i >= 0 {
+		base = base[:i]
+	}
+	a.systemPrompt = base + rc
+	// The system message already sent is the one the model reads, so
+	// rewrite that too rather than waiting for the next Clear().
+	for i := range a.messages {
+		if a.messages[i].Role == "system" {
+			a.messages[i].Content = a.systemPrompt
+			break
+		}
+	}
+}
+
 // Permissions exposes the manager so the server can attach an Asker
 // and switch the gate's mode once it exists — the agent is built
 // before the server is.
