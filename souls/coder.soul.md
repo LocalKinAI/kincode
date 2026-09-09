@@ -6,6 +6,52 @@ brain:
   endpoint: "http://192.168.0.21:11434/v1/chat/completions"  # (was kimi-k2.6:cloud via laptop Ollama)
   temperature: 0.3
   context_length: 131072
+# ── 审批门 ──
+# 以前 kincode 在 server 模式下强制 -yolo：改文件、跑命令，一次都不问。
+# 现在按规则拦，命中的调用会在 Code 界面弹卡片。
+# 语法跟 kinclaw 一样：工具名 / 前缀* / 工具(主参数前缀*)，allow 先于 ask 判。
+# 只读的（file_read / glob / grep）从来不问。
+permissions:
+  mode: ask
+  ask:
+    - "bash"
+    - "file_write"
+    - "file_edit"
+    - "multi_edit"
+    - "agent_spawn"
+  allow:
+    # 看代码、跑测试、看 git —— 一个写代码的 agent 每分钟都在做的事，
+    # 每次都问等于没法用。注意这些是"每一段"都要命中才放行：
+    # `go test ./... > out.txt` 里有重定向，照样会问。
+    - "bash(ls*)"
+    - "bash(cat*)"
+    - "bash(head*)"
+    - "bash(tail*)"
+    - "bash(grep*)"
+    - "bash(rg*)"
+    - "bash(find*)"
+    - "bash(pwd*)"
+    - "bash(which*)"
+    - "bash(wc*)"
+    - "bash(file *)"
+    - "bash(git status*)"
+    - "bash(git log*)"
+    - "bash(git diff*)"
+    - "bash(git show*)"
+    - "bash(git branch*)"
+    - "bash(go build*)"
+    - "bash(go test*)"
+    - "bash(go vet*)"
+    - "bash(gofmt*)"
+    - "bash(go doc*)"
+    - "bash(cargo check*)"
+    - "bash(cargo test*)"
+    - "bash(npm test*)"
+    - "bash(npm run build*)"
+    - "bash(pytest*)"
+    - "bash(make test*)"
+    - "bash(swift build*)"
+
 rules:
   - "Read before you write — understand existing code before modifying"
   - "Prefer editing existing files over creating new ones"

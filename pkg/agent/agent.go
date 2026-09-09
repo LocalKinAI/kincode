@@ -274,6 +274,11 @@ func (a *Agent) RunWithEvents(ctx context.Context, userMessage string, ev Events
 	return a.RunWithImagesAndEvents(ctx, userMessage, nil, ev)
 }
 
+// Permissions exposes the manager so the server can attach an Asker
+// and switch the gate's mode once it exists — the agent is built
+// before the server is.
+func (a *Agent) Permissions() *permission.Manager { return a.permissions }
+
 // SetPlanMode toggles plan mode on the underlying permission manager.
 // Lets the server flip the gate live (POST /api/plan_mode) without
 // reconstructing the agent.
@@ -370,7 +375,7 @@ func (a *Agent) RunWithImagesAndEvents(ctx context.Context, userMessage string, 
 			summary := toolSummary(tc.Function.Name, args)
 			ev.toolCall(tc.ID, tc.Function.Name, summary, args)
 
-			result, execErr := a.executeTool(tc)
+			result, execErr := a.executeTool(ctx, tc)
 			if execErr != nil {
 				result = fmt.Sprintf("Error: %s", execErr)
 			}
@@ -397,7 +402,7 @@ func parseToolArgs(tc provider.ToolCall) map[string]any {
 	return args
 }
 
-func (a *Agent) executeTool(tc provider.ToolCall) (string, error) {
+func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) (string, error) {
 	tool, err := a.tools.Get(tc.Function.Name)
 	if err != nil {
 		return "", err
@@ -426,11 +431,14 @@ func (a *Agent) executeTool(tc provider.ToolCall) (string, error) {
 		}
 	}
 
-	// Get a summary for confirmation prompt.
-	summary := toolSummary(tc.Function.Name, args)
-
-	if !a.permissions.Confirm(tc.Function.Name, summary) {
-		return "Tool call denied by user.", nil
+	// The approval gate. Its refusal text is written for the model —
+	// it becomes the tool result, so the model adapts instead of
+	// retrying the same call into the same wall.
+	if ok, reason := a.permissions.Check(ctx, tc.Function.Name, stringParams(args)); !ok {
+		if reason == "" {
+			reason = "Tool call denied by user."
+		}
+		return reason, nil
 	}
 
 	// Display side: callers (Run, RunWithEvents) emit a tool_call event
@@ -442,6 +450,25 @@ func (a *Agent) executeTool(tc provider.ToolCall) (string, error) {
 	}
 
 	return result, nil
+}
+
+// stringParams flattens a tool's arguments for the gate and for the
+// approval card. Values a person cannot read at a glance (a whole file
+// body) are truncated here rather than in the UI, so every surface
+// shows the same thing.
+func stringParams(args map[string]any) map[string]string {
+	out := make(map[string]string, len(args))
+	for k, v := range args {
+		s, ok := v.(string)
+		if !ok {
+			s = fmt.Sprintf("%v", v)
+		}
+		if len(s) > 400 {
+			s = s[:400] + "…"
+		}
+		out[k] = s
+	}
+	return out
 }
 
 func toolSummary(name string, args map[string]any) string {

@@ -298,16 +298,25 @@ func main() {
 		}
 	}()
 
-	// Initialize permissions. Server mode forces yolo: there's no
-	// user-facing prompt loop to gate tool calls through, and the
-	// desktop shell's permission UI isn't wired in v1. Surface this
-	// in the log so it's not surprising.
-	yoloEffective := *yolo
-	if *serve && !yoloEffective {
-		fmt.Fprintln(os.Stderr, "[serve] forcing -yolo: server mode has no permission prompt loop")
-		yoloEffective = true
+	// Initialize permissions.
+	//
+	// Server mode used to force -yolo here, on the grounds that there
+	// was no prompt loop to gate through and the desktop shell had no
+	// permission UI. Both stopped being true: the gate below asks
+	// through whatever Asker is attached, and the shell shows an
+	// approval card. An agent that edits files and runs commands
+	// without ever asking is not a default anyone chose — it was a
+	// stopgap that outlived its reason.
+	perms := permission.New(*yolo)
+	if !*yolo {
+		mode := permission.ModeAuto
+		var askRules, allowRules []string
+		if soulFM.Permissions != nil {
+			mode = permission.Mode(soulFM.Permissions.Mode)
+			askRules, allowRules = soulFM.Permissions.Ask, soulFM.Permissions.Allow
+		}
+		perms.SetGate(permission.NewGate(mode, askRules, allowRules, nil))
 	}
-	perms := permission.New(yoloEffective)
 
 	// Project memory — load KINCODE.md / CLAUDE.md from cwd (walks
 	// up parent dirs) and append to the system prompt. Same pattern
@@ -497,7 +506,31 @@ func runServe(ctx context.Context, a *agent.Agent, port int, providerName, model
 			Model:        mdl,
 			MessageCount: len(a.Messages()),
 			PlanMode:     a.PlanMode(),
+			PermissionMode: func() string {
+				if g := a.Permissions().Gate(); g != nil {
+					return string(g.Mode())
+				}
+				return "auto" // -yolo, or a persona with no permissions block
+			}(),
 		}
+	})
+
+	// The approval card is the Asker now. Installed here rather than at
+	// gate construction because the server does not exist yet up there.
+	if g := a.Permissions().Gate(); g != nil {
+		g.SetAsker(permission.AskerFunc(srv.AskPermission))
+	}
+
+	// POST /api/permission_mode — switch the gate mid-session. Allowed
+	// mid-turn, unlike plan mode: "stop asking me, I'm watching" is
+	// decided while watching a turn, and the next tool call reads it.
+	srv.SetPermissionModeHandler(func(mode string) string {
+		g := a.Permissions().Gate()
+		if g == nil {
+			return "auto" // -yolo: there is no gate to switch.
+		}
+		g.SetMode(permission.Mode(mode))
+		return string(g.Mode())
 	})
 
 	srv.SetPlanModeHandler(func(enabled bool) bool {
@@ -689,13 +722,32 @@ Guidelines:
 //     compat with kincode <0.7 souls).
 //   - Otherwise, the per-provider defaults baked into main.
 type soulFrontmatter struct {
-	Name           string     `yaml:"name"`
-	Rules          []string   `yaml:"rules"`
-	Brain          *soulBrain `yaml:"brain,omitempty"`
-	Model          string     `yaml:"model"`       // legacy — top-level model string
-	Temperature    float64    `yaml:"temperature"` // legacy — top-level temp (unused)
-	Thinking       bool       `yaml:"thinking"`
-	ThinkingBudget int        `yaml:"thinking_budget"`
+	Name  string     `yaml:"name"`
+	Rules []string   `yaml:"rules"`
+	Brain *soulBrain `yaml:"brain,omitempty"`
+	// Permissions is the approval gate, same grammar as kinclaw's:
+	//
+	//	permissions:
+	//	  mode: ask          # or auto
+	//	  ask:  ["bash", "file_write", "file_edit", "multi_edit"]
+	//	  allow: ["bash(go test*)", "bash(git diff*)"]
+	//
+	// Absent means auto, so every persona written before this keeps
+	// running exactly as it did.
+	Permissions    *soulPermissions `yaml:"permissions,omitempty"`
+	Model          string           `yaml:"model"`       // legacy — top-level model string
+	Temperature    float64          `yaml:"temperature"` // legacy — top-level temp (unused)
+	Thinking       bool             `yaml:"thinking"`
+	ThinkingBudget int              `yaml:"thinking_budget"`
+}
+
+// soulPermissions mirrors kinclaw's permissions block — the two share
+// a rule grammar on purpose, so `bash(git push*)` means the same thing
+// wherever it is written.
+type soulPermissions struct {
+	Mode  string   `yaml:"mode"`
+	Ask   []string `yaml:"ask"`
+	Allow []string `yaml:"allow"`
 }
 
 // soulBrain mirrors kinclaw's nested brain config. Provider + model

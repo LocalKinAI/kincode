@@ -111,6 +111,10 @@ type State struct {
 	Provider     string `json:"provider,omitempty"`
 	MessageCount int    `json:"message_count"`
 	PlanMode     bool   `json:"plan_mode"`
+	// PermissionMode is "ask" or "auto" — what the approval gate is
+	// doing right now, so the shell's mode picker shows the truth
+	// after a reconnect rather than its own last guess.
+	PermissionMode string `json:"permission_mode,omitempty"`
 }
 
 // StateHandler returns the agent's current state. Server caches
@@ -155,6 +159,8 @@ type Server struct {
 	brainHandler     BrainSwitchHandler
 	stateHandler     StateHandler
 	planModeHandler  PlanModeHandler
+	permModeHandler  PermissionModeHandler
+	asks             *askWaiters
 
 	mu   sync.Mutex
 	subs map[chan Event]struct{}
@@ -169,6 +175,7 @@ func New(addr string, h ChatHandler) *Server {
 		addr:        addr,
 		chatHandler: h,
 		subs:        make(map[chan Event]struct{}),
+		asks:        newAskWaiters(),
 	}
 }
 
@@ -200,6 +207,13 @@ type PlanModeHandler func(enabled bool) (newState bool)
 // SetPlanModeHandler wires POST /api/plan_mode. Without it the
 // endpoint returns 501 — UI's plan-mode toggle has no effect.
 func (s *Server) SetPlanModeHandler(h PlanModeHandler) { s.planModeHandler = h }
+
+// PermissionModeHandler switches the approval gate between "auto" and
+// "ask" and returns the mode actually in force.
+type PermissionModeHandler func(mode string) string
+
+// SetPermissionModeHandler wires POST /api/permission_mode.
+func (s *Server) SetPermissionModeHandler(h PermissionModeHandler) { s.permModeHandler = h }
 
 // Push fans an event out to every subscriber non-blockingly. Slow
 // browsers/clients drop events past their 64-deep buffer rather than
@@ -241,6 +255,8 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	mux.HandleFunc("/api/clear", s.handleClear)
 	mux.HandleFunc("/api/brain", s.handleBrain)
 	mux.HandleFunc("/api/plan_mode", s.handlePlanMode)
+	mux.HandleFunc("/api/permission", s.handlePermission)
+	mux.HandleFunc("/api/permission_mode", s.handlePermissionMode)
 	mux.HandleFunc("/api/events", s.handleEvents)
 
 	listener, err := net.Listen("tcp", s.addr)

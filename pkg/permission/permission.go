@@ -3,6 +3,7 @@ package permission
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -10,8 +11,14 @@ import (
 
 // Manager controls whether tool calls require user confirmation.
 type Manager struct {
-	yolo      bool
-	planMode  bool
+	yolo     bool
+	planMode bool
+	// gate is the rule-driven approval layer. nil keeps the old
+	// behaviour (terminal y/n on every non-read tool, or nothing at
+	// all in yolo mode); non-nil routes the decision through rules
+	// and whatever Asker is attached — a terminal prompt in the REPL,
+	// an approval card in the desktop shell.
+	gate      *Gate
 	reader    *bufio.Reader
 	blocklist []string
 }
@@ -94,6 +101,29 @@ func (m *Manager) CheckBash(command string) error {
 
 // Confirm asks the user for permission to execute a tool call.
 // Returns true if approved. In yolo mode, always returns true.
+// SetGate installs the rule-driven gate. Once set, Check is the way
+// in; Confirm stays for the legacy terminal path.
+func (m *Manager) SetGate(g *Gate) { m.gate = g }
+
+// Gate returns the installed gate, or nil.
+func (m *Manager) Gate() *Gate { return m.gate }
+
+// Check decides one call. With a gate installed the rules and the
+// Asker decide; without one it falls back to Confirm's terminal
+// prompt, so nothing that used to work stopped working.
+func (m *Manager) Check(ctx context.Context, tool string, params map[string]string) (bool, string) {
+	if m.yolo {
+		return true, ""
+	}
+	if m.gate != nil {
+		return m.gate.Check(ctx, tool, params)
+	}
+	if m.Confirm(tool, Summary(tool, params)) {
+		return true, ""
+	}
+	return false, "Tool call denied by user."
+}
+
 func (m *Manager) Confirm(toolName string, summary string) bool {
 	if m.yolo {
 		return true
