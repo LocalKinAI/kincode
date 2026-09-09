@@ -79,7 +79,7 @@ func TestBackgroundReturnsImmediatelyAndKeepsRunning(t *testing.T) {
 	b := &BashTool{}
 	start := time.Now()
 	out := runBash(t, b, map[string]any{
-		"command": "echo first; sleep 30; echo never",
+		"command":    "echo first; sleep 30; echo never",
 		"background": true,
 	})
 	if time.Since(start) > 3*time.Second {
