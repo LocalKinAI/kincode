@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/LocalKinAI/kincode/pkg/permission"
 	"github.com/LocalKinAI/kincode/pkg/provider"
 	"github.com/LocalKinAI/kincode/pkg/tools"
+	"github.com/LocalKinAI/kincode/pkg/verify"
 )
 
 const defaultMaxRounds = 25
@@ -23,6 +25,9 @@ type Agent struct {
 	messages     []provider.Message
 	systemPrompt string
 	maxRounds    int
+	// verify runs the project's build after a round that changed
+	// files, and shows the model the result.
+	verify bool
 }
 
 // Config holds agent configuration.
@@ -32,6 +37,10 @@ type Config struct {
 	Permissions  *permission.Manager
 	SystemPrompt string
 	MaxRounds    int
+	// Verify turns on the post-edit build check. On by default for the
+	// interactive agent; off for spawned sub-agents, which work on the
+	// same tree and would each build it.
+	Verify bool
 }
 
 // New creates a new Agent.
@@ -47,6 +56,7 @@ func New(cfg Config) *Agent {
 		permissions:  cfg.Permissions,
 		systemPrompt: cfg.SystemPrompt,
 		maxRounds:    maxRounds,
+		verify:       cfg.Verify,
 	}
 
 	// Add system prompt as first message.
@@ -213,6 +223,17 @@ type Events struct {
 	// (after each round). Lets the UI commit the assistant bubble and
 	// reset for the next round.
 	OnAssistantDone func(content string)
+	// OnVerified fires after a round that changed files, with the
+	// project's build result. The model is told either way; the user
+	// mostly wants to see the red one.
+	OnVerified func(checker string, ok bool, output string)
+}
+
+// verified fans the post-edit build result out to the UI.
+func (e Events) verified(checker string, ok bool, output string) {
+	if e.OnVerified != nil {
+		e.OnVerified(checker, ok, output)
+	}
 }
 
 // noop returns a callback that does nothing — saves nil-checks at every
@@ -370,6 +391,8 @@ func (a *Agent) RunWithImagesAndEvents(ctx context.Context, userMessage string, 
 		}
 
 		// Execute tool calls.
+		var changed []string
+		var lastToolID string
 		for _, tc := range resp.ToolCalls {
 			args := parseToolArgs(tc)
 			summary := toolSummary(tc.Function.Name, args)
@@ -379,6 +402,12 @@ func (a *Agent) RunWithImagesAndEvents(ctx context.Context, userMessage string, 
 			if execErr != nil {
 				result = fmt.Sprintf("Error: %s", execErr)
 			}
+			if execErr == nil {
+				if p := editedPath(tc.Function.Name, args); p != "" {
+					changed = append(changed, p)
+				}
+			}
+			lastToolID = tc.ID
 			ev.toolResult(tc.ID, tc.Function.Name, result, execErr)
 
 			// Add tool result to messages.
@@ -388,9 +417,56 @@ func (a *Agent) RunWithImagesAndEvents(ctx context.Context, userMessage string, 
 				ToolCallID: tc.ID,
 			})
 		}
+
+		// The round changed files: build the project once and tell the
+		// model what the compiler said. Once per round, not per edit —
+		// an agent renaming a symbol across five files should see one
+		// answer, after all five, not four spurious failures on the way.
+		if len(changed) > 0 && a.verify {
+			res := verify.Run(ctx, a.repoRoot(), changed, verifyTimeout)
+			if note := res.Note(); note != "" {
+				ev.verified(res.Ran, res.OK, res.Output)
+				// Attached to the last tool result rather than sent as a
+				// new message: providers reject a turn where a tool call
+				// has no matching result, and a synthetic user message
+				// mid-round reads to the model as the human interrupting.
+				if n := len(a.messages); n > 0 && a.messages[n-1].ToolCallID == lastToolID {
+					a.messages[n-1].Content += note
+				}
+			}
+		}
 	}
 
 	return "", totalUsage, fmt.Errorf("reached max rounds (%d) without completing", a.maxRounds)
+}
+
+// verifyTimeout caps the post-edit build. Long enough for an
+// incremental Go or Rust build, short enough that a cold cache does
+// not hold a conversation hostage — a check that runs out of time
+// reports nothing rather than a failure.
+const verifyTimeout = 90 * time.Second
+
+// editedPath is the file a tool call changed, or "" if it changed none.
+// Reads and searches do not count: the point is to check after the
+// project could have been broken.
+func editedPath(tool string, args map[string]any) string {
+	switch tool {
+	case "file_write", "file_edit", "multi_edit":
+		if p, ok := args["file_path"].(string); ok {
+			return p
+		}
+	}
+	return ""
+}
+
+// repoRoot is where the check runs. The server chdirs into the repo
+// the user picked, so the process's own working directory is it.
+func (a *Agent) repoRoot() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return wd
 }
 
 // parseToolArgs decodes a tool call's JSON arguments into a map.

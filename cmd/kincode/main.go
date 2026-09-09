@@ -38,6 +38,7 @@ func main() {
 	endpoint := flag.String("endpoint", "", "Custom API endpoint (for ollama/compatible APIs)")
 	mcpConfig := flag.String("mcp", "", "Path to MCP servers config JSON file")
 	yolo := flag.Bool("yolo", false, "Auto-approve all tool calls without confirmation")
+	noVerify := flag.Bool("no-verify", false, "don't build the project after the agent edits a file")
 	showVersion := flag.Bool("version", false, "Show version and exit")
 	login := flag.Bool("login", false, "Login via Claude OAuth (use your Claude account, no API key needed)")
 	serve := flag.Bool("serve", false, "Run as HTTP+SSE server instead of REPL (for desktop shells)")
@@ -335,6 +336,10 @@ func main() {
 		Tools:        registry,
 		Permissions:  perms,
 		SystemPrompt: systemPrompt,
+		// Build the project after a round that changed files and show
+		// the model what the compiler said. -no-verify turns it off for
+		// a tree where the build is slow or the toolchain is elsewhere.
+		Verify: !*noVerify,
 	})
 
 	ctx := context.Background()
@@ -447,6 +452,18 @@ func runServe(ctx context.Context, a *agent.Agent, port int, providerName, model
 				// turn_done fires below after the whole loop, not per
 				// round — UI cares about "agent finished, you can type"
 				// not "model paused for tool call".
+			},
+			OnVerified: func(checker string, ok bool, output string) {
+				// The model is told through the tool result; this is for
+				// the human, who wants to know the build broke without
+				// reading a tool transcript to find out.
+				ev := server.Event{Type: "verified", Name: checker, Output: output}
+				if ok {
+					ev.Summary = "ok"
+				} else {
+					ev.Summary = "failed"
+				}
+				srv.Push(ev)
 			},
 		})
 		if err != nil {
