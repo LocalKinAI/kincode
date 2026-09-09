@@ -102,8 +102,14 @@ func TestUndoTwiceWalksBackTwoTurns(t *testing.T) {
 	f := filepath.Join(repo, "f.txt")
 	write(t, f, "v1\n")
 
-	s.Begin("first"); s.Save(f); write(t, f, "v2\n"); s.Commit()
-	s.Begin("second"); s.Save(f); write(t, f, "v3\n"); s.Commit()
+	s.Begin("first")
+	s.Save(f)
+	write(t, f, "v2\n")
+	s.Commit()
+	s.Begin("second")
+	s.Save(f)
+	write(t, f, "v3\n")
+	s.Commit()
 
 	if _, err := s.Undo(); err != nil {
 		t.Fatal(err)
@@ -174,7 +180,10 @@ func TestSnapshotsSurviveARestart(t *testing.T) {
 	s, repo := store(t)
 	f := filepath.Join(repo, "f.txt")
 	write(t, f, "old\n")
-	s.Begin("edit"); s.Save(f); write(t, f, "new\n"); s.Commit()
+	s.Begin("edit")
+	s.Save(f)
+	write(t, f, "new\n")
+	s.Commit()
 
 	reopened, err := New(repo)
 	if err != nil {
