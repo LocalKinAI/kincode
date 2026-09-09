@@ -161,6 +161,7 @@ type Server struct {
 	planModeHandler  PlanModeHandler
 	permModeHandler  PermissionModeHandler
 	repoChanged      func(dir string)
+	undoHandler      UndoHandler
 	asks             *askWaiters
 
 	mu   sync.Mutex
@@ -213,6 +214,17 @@ func (s *Server) SetPlanModeHandler(h PlanModeHandler) { s.planModeHandler = h }
 // "ask" and returns the mode actually in force.
 type PermissionModeHandler func(mode string) string
 
+// UndoHandler takes back the last turn's file changes and returns the
+// paths it restored. GET describes what would be undone without doing
+// it, so a button can be labelled and disabled honestly.
+type UndoHandler interface {
+	Peek() (prompt string, files []string, ok bool)
+	Undo() (files []string, err error)
+}
+
+// SetUndoHandler wires /api/undo. Without it the endpoint returns 501.
+func (s *Server) SetUndoHandler(h UndoHandler) { s.undoHandler = h }
+
 // SetRepoChangedHandler is called after POST /api/repo has chdir'd,
 // so the agent can re-derive anything it knows about the repo.
 func (s *Server) SetRepoChangedHandler(f func(dir string)) { s.repoChanged = f }
@@ -261,6 +273,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	mux.HandleFunc("/api/brain", s.handleBrain)
 	mux.HandleFunc("/api/plan_mode", s.handlePlanMode)
 	mux.HandleFunc("/api/permission", s.handlePermission)
+	mux.HandleFunc("/api/undo", s.handleUndo)
 	mux.HandleFunc("/api/permission_mode", s.handlePermissionMode)
 	mux.HandleFunc("/api/events", s.handleEvents)
 

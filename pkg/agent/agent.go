@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LocalKinAI/kincode/pkg/checkpoint"
 	"github.com/LocalKinAI/kincode/pkg/permission"
 	"github.com/LocalKinAI/kincode/pkg/provider"
 	"github.com/LocalKinAI/kincode/pkg/tools"
@@ -28,6 +29,9 @@ type Agent struct {
 	// verify runs the project's build after a round that changed
 	// files, and shows the model the result.
 	verify bool
+	// undo snapshots files before the agent changes them, so a turn
+	// can be taken back. nil disables it.
+	undo *checkpoint.Store
 }
 
 // Config holds agent configuration.
@@ -41,6 +45,10 @@ type Config struct {
 	// interactive agent; off for spawned sub-agents, which work on the
 	// same tree and would each build it.
 	Verify bool
+	// Undo snapshots files before they are changed. nil disables it —
+	// sub-agents share the parent's turn, so the parent owns the
+	// snapshot.
+	Undo *checkpoint.Store
 }
 
 // New creates a new Agent.
@@ -57,6 +65,7 @@ func New(cfg Config) *Agent {
 		systemPrompt: cfg.SystemPrompt,
 		maxRounds:    maxRounds,
 		verify:       cfg.Verify,
+		undo:         cfg.Undo,
 	}
 
 	// Add system prompt as first message.
@@ -321,6 +330,13 @@ func (a *Agent) SetRepoContext(rc string) {
 	}
 }
 
+// SetUndoStore installs (or replaces) the checkpoint store — replaced
+// when the user switches repos, since undo is per-project.
+func (a *Agent) SetUndoStore(s *checkpoint.Store) { a.undo = s }
+
+// UndoStore returns it, for the server's /api/undo.
+func (a *Agent) UndoStore() *checkpoint.Store { return a.undo }
+
 // Permissions exposes the manager so the server can attach an Asker
 // and switch the gate's mode once it exists — the agent is built
 // before the server is.
@@ -371,6 +387,11 @@ func (a *Agent) RunWithImagesAndEvents(ctx context.Context, userMessage string, 
 	if a.PlanMode() {
 		userMessage = planModeDirective + userMessage
 	}
+
+	// One undo point per turn: "undo that" means the whole thing the
+	// user asked for, not the third of five edits it took.
+	a.undo.Begin(userMessage)
+	defer a.undo.Commit()
 
 	userMsg := provider.Message{
 		Role:    "user",
@@ -545,6 +566,13 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) (string, 
 
 	// Display side: callers (Run, RunWithEvents) emit a tool_call event
 	// BEFORE invoking executeTool, so we don't print here.
+
+	// Remember what the file looked like, now that the call is
+	// definitely going to happen. After the gate on purpose: a refused
+	// call must not leave an undo point that restores nothing.
+	if p := editedPath(tc.Function.Name, args); p != "" {
+		a.undo.Save(p)
+	}
 
 	result, err := tool.Execute(args)
 	if err != nil {

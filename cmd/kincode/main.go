@@ -14,6 +14,7 @@ import (
 
 	"github.com/LocalKinAI/kincode/internal/mcp"
 	"github.com/LocalKinAI/kincode/pkg/agent"
+	"github.com/LocalKinAI/kincode/pkg/checkpoint"
 	"github.com/LocalKinAI/kincode/pkg/permission"
 	"github.com/LocalKinAI/kincode/pkg/provider"
 	"github.com/LocalKinAI/kincode/pkg/repl"
@@ -308,6 +309,7 @@ func main() {
 	// approval card. An agent that edits files and runs commands
 	// without ever asking is not a default anyone chose — it was a
 	// stopgap that outlived its reason.
+	var undoStore *checkpoint.Store
 	perms := permission.New(*yolo)
 	if !*yolo {
 		mode := permission.ModeAuto
@@ -330,6 +332,17 @@ func main() {
 			len(memory))
 	}
 
+	// Undo, per repo. Snapshots only the files the agent is about to
+	// change, so taking a turn back never touches the user's own
+	// uncommitted work — which is what makes it safe to offer.
+	if wd, err := os.Getwd(); err == nil {
+		if store, err := checkpoint.New(wd); err == nil {
+			undoStore = store
+		} else {
+			fmt.Fprintf(os.Stderr, "[undo] disabled: %v\n", err)
+		}
+	}
+
 	// Where are we. Four rounds of pwd / ls / git status / git log at
 	// the top of every session, to learn what the harness could just
 	// say — and an agent that skips the ritual edits files with the
@@ -344,6 +357,7 @@ func main() {
 		Tools:        registry,
 		Permissions:  perms,
 		SystemPrompt: systemPrompt,
+		Undo:         undoStore,
 		// Build the project after a round that changed files and show
 		// the model what the compiler said. -no-verify turns it off for
 		// a tree where the build is slow or the toolchain is elsewhere.
@@ -551,7 +565,14 @@ func runServe(ctx context.Context, a *agent.Agent, port int, providerName, model
 	// decided while watching a turn, and the next tool call reads it.
 	srv.SetRepoChangedHandler(func(dir string) {
 		a.SetRepoContext(agent.RepoContext(dir))
+		// Undo is per project: the snapshots for the folder we just
+		// left must not be offered as "undo" in the one we arrived in.
+		if store, err := checkpoint.New(dir); err == nil {
+			a.SetUndoStore(store)
+		}
 	})
+
+	srv.SetUndoHandler(undoBridge{a})
 
 	srv.SetPermissionModeHandler(func(mode string) string {
 		g := a.Permissions().Gate()
@@ -885,3 +906,15 @@ func loadSoulFile(path string) (string, *soulFrontmatter, error) {
 	// No frontmatter — use the whole file as the system prompt.
 	return strings.TrimSpace(content), nil, nil
 }
+
+// undoBridge adapts the agent's checkpoint store to the server's
+// UndoHandler. It reads the store off the agent on each call rather
+// than capturing it, because switching repos replaces it.
+type undoBridge struct{ a *agent.Agent }
+
+func (u undoBridge) Peek() (string, []string, bool) {
+	_, prompt, files, ok := u.a.UndoStore().Last()
+	return prompt, files, ok
+}
+
+func (u undoBridge) Undo() ([]string, error) { return u.a.UndoStore().Undo() }
