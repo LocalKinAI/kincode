@@ -1,5 +1,132 @@
 # Changelog
 
+## [Unreleased]
+
+The release that stops kincode being an agent you have to watch. Four
+of these exist because a coding agent's model is not trustworthy enough
+to be left alone with your files — the harness is what makes it safe to
+be wrong.
+
+### Fixed
+
+- **Server mode ran as `-yolo` and could not be talked out of it.** The
+  flag was forced on with a comment explaining that there was no prompt
+  loop to gate through and the desktop shell had no permission UI. Both
+  stopped being true a while ago, and what was left was an agent the
+  shell drives that could edit any file and run any command without
+  asking once, with a bash blocklist as the only thing between a typo
+  and your home directory.
+
+### Added
+
+- **The approval gate.** kinclaw's, grammar included, so
+  `bash(git push*)` means the same thing in both:
+
+  ```yaml
+  permissions:
+    mode: ask
+    ask:   ["bash", "file_write", "file_edit", "multi_edit", "agent_spawn"]
+    allow: ["bash(go test*)", "bash(git diff*)"]
+  ```
+
+  A prefix rule is checked against every simple command the shell would
+  actually run — split on `;` `&&` `||` `|` and newlines, quote-aware —
+  and a redirect or substitution is never covered by one. Without that,
+  `bash(go build*)` would wave through `go build ./... > ~/.zshrc`.
+  Irreversible commands (`rm -rf`, `sudo`, `git push`, `curl | sh`)
+  reach a human even when no rule matches. Absent `permissions:` means
+  auto, so every persona written before this runs exactly as it did,
+  and `-yolo` still means what it always meant. Over HTTP the gate
+  parks the turn, pushes `permission_request`, and waits on
+  `POST /api/permission`; a cancelled turn resolves as deny rather than
+  hanging behind a card nobody can see.
+
+- **Post-edit verification.** After a round that changed files, kincode
+  builds the project and puts the compiler's answer in the tool result
+  the model reads. `go build ./...`, `cargo check`, `tsc --noEmit`,
+  `swift build`, picked by the marker file at the repo root.
+
+  The persona already said "run the build" — a rule in a prompt is a
+  wish. What makes a coding agent worth trusting is that loop being
+  mechanical: edit, read the compiler, fix, and only then claim to be
+  done. Left to a small model it renames a symbol, misses the call
+  site, says "done", and leaves a tree that has not compiled since the
+  second edit. Deliberately the build and not the test suite — a
+  compile catches what agents actually get wrong, takes seconds, and
+  has no side effects. Once per round, not per edit. A check that times
+  out reports nothing rather than a failure: telling the model it broke
+  the build when the truth is "we did not find out" sends it editing
+  code that was fine. `-no-verify` turns it off.
+
+- **`git` — read-only.** status, diff, log, show, blame. A coding agent
+  without git cannot see what it just changed, which branch it is on,
+  or whether the file it is about to rewrite has someone's uncommitted
+  work in it. `bash` could reach git, which left two holes: plan mode
+  denies bash outright, so while *planning* — exactly when the diff
+  matters — it could not; and a real change's diff is thousands of
+  lines arriving in one piece. `diff` answers with the shape first
+  (`--stat`) and takes a path to zoom into one file. Writes are not
+  actions it has: committing and pushing are yours, and the agent can
+  still ask for them through bash, where the gate puts the question to
+  a human.
+
+- **Repo orientation in the system prompt.** Branch, ahead/behind,
+  uncommitted files, five recent subjects. Every session used to open
+  with pwd / ls / git status / git log — four rounds to learn what the
+  harness already knew — and when the model skipped the ritual it
+  edited files with the user's work in them. Re-derived when you switch
+  repos, since a prompt describing the previous project is worse than
+  none.
+
+- **Undo.** `GET /api/undo` describes what taking back the last turn
+  would restore; `POST` does it.
+
+  The way out of a bad turn was `git checkout`, which is both too much
+  and not enough: too much because it destroys whatever you had
+  uncommitted before the agent started, not enough because a file it
+  created is untracked and survives. So the snapshot is scoped to
+  exactly the files the agent is about to touch, taken the moment
+  before it touches them. Everything else in the tree is out of scope
+  by construction, which is what makes it safe behind one button. One
+  point per turn; a turn that changed nothing leaves none. Snapshots
+  live under `~/.kincode/undo` keyed by repo and are read off disk, so
+  the turn before a restart is still undoable. Last ten.
+
+- **Background commands.** `bash(command, background: true)` returns a
+  task id and keeps running; `bash_output` reads what has arrived since
+  the last read, so repeated calls follow the log rather than
+  re-reading it, and `kill: true` stops it. A dev server, a watcher, a
+  ten-minute suite: previously the agent either could not start them or
+  started them and got a timeout for its trouble. Each task gets its
+  own process group — `bash -c "npm run dev"` is a shell whose child
+  holds the port. Tasks die with the process and on a repo switch.
+
+### Changed
+
+- **`cd` sticks.** Every bash call used to be its own process starting
+  at the repo root, so `cd cmd/kincode` was forgotten before the next
+  command ran. The directory a command ends in is carried into the next
+  one, the way a terminal does it — through a temp file rather than a
+  printed `pwd`, so the caller never reads past plumbing, and it sticks
+  even when the command after the `cd` fails. Environment deliberately
+  does not persist: keeping it would mean holding a real shell open and
+  parsing where each command's output stops.
+
+- **`web_fetch` uses kinbrowser when it is installed.** Reading
+  documentation is most of what a coding agent uses the web for, and
+  what makes documentation readable is structure — which part is prose
+  and which part is the code you are meant to copy. Measured on
+  pkg.go.dev/os/exec: the regex path returns 30KB opening with the Go
+  website's navigation and not one code fence; through kinbrowser it is
+  16KB starting at the package doc with its sixteen examples still
+  marked as code. Not installed, failed, or a page that rendered to
+  nothing all fall back to the old path.
+
+- **Default brain is `kimi-k2.6:cloud` on this Mac's Ollama.** The LAN
+  box went down three times in one day and each time kincode could not
+  answer at all; ornith also flailed on precise edit work in testing,
+  reading paths that do not exist rather than making the change.
+
 ## [0.10.0] - 2026-05-05
 
 **Image input + plan mode.** Two capability additions on top of

@@ -8,7 +8,12 @@ Like Claude Code, but open-source and 10x lighter.
 
 - Single binary (~10MB), zero runtime dependencies
 - Multi-provider: Anthropic, OpenAI, Ollama (any OpenAI-compatible endpoint)
-- **12 built-in tools**: bash, file_read / file_write / file_edit / multi_edit, glob, grep, web_fetch, web_search, memory, agent_spawn, todo_write
+- **14 built-in tools**: bash, bash_output, file_read / file_write / file_edit / multi_edit, glob, grep, git, web_fetch, web_search, memory, agent_spawn, todo_write
+- **Approval gate** — `permissions: {mode: ask, ask: [...], allow: [...]}` in the soul. A matching call stops for a human: a terminal prompt, or an approval card in [KinClaw Mac](https://github.com/LocalKinAI/kinclaw-mac). Same rule grammar as kinclaw, and a `bash(...)` allow rule is checked against every simple command the shell would run — `bash(go test*)` does not wave through `go test ./... > ~/.zshrc`
+- **Builds after it edits** — a round that changed files is followed by `go build ./...` / `cargo check` / `tsc --noEmit` / `swift build`, and the compiler's answer goes into the tool result the model reads. The edit → verify → fix loop is mechanical rather than something the prompt asks for
+- **Undo** — `POST /api/undo` takes back the last turn's file changes, and *only* those: your own uncommitted work is out of scope by construction, which `git checkout` cannot say
+- **Reads the repo** — a read-only `git` tool (status / diff / log / show / blame, allowed in plan mode) plus branch, dirty files and recent commits in the system prompt, so a session does not open with four rounds of orientation
+- **Background commands** — `bash(..., background: true)` for a dev server or a slow suite; `bash_output` follows its log. And `cd` carries into the next call, the way a terminal does it
 - **Image input** — vision blocks for Anthropic claude-3+ and OpenAI gpt-4o. Send screenshots, mockups, diagrams via `POST /api/chat {message, images:[{media_type, data}]}`
 - **Plan mode** — `POST /api/plan_mode {enabled}` toggles a read-only gate. Agent investigates + drafts a markdown plan, doesn't modify until you approve
 - **Named subagents** — drop a `.md` file at `~/.kincode/agents/<name>.md` or `~/.localkin/agents/<name>.md` (family-shared) with YAML frontmatter; the parent model dispatches via `agent_spawn(agent="code-reviewer", task="...")`
@@ -85,6 +90,10 @@ brain:
   model: "kimi-k2.6:cloud"    # picks the brain when no -provider/-model on CLI
   temperature: 0.3
   context_length: 131072
+permissions:                  # optional; absent means auto, as before
+  mode: ask
+  ask:   ["bash", "file_write", "file_edit", "multi_edit", "agent_spawn"]
+  allow: ["bash(go test*)", "bash(git diff*)", "bash(ls*)"]
 rules:
   - "Read before you write"
   - "Stdlib first, deps last resort"
@@ -93,6 +102,17 @@ rules:
 
 You are kincode, a senior coding agent. Ship clean, correct, minimal code...
 ```
+
+`permissions:` is the approval gate. `mode: ask` stops matching calls
+for a human; `allow` beats `ask`, and read-only tools (`file_read`,
+`glob`, `grep`, `git`) never ask. The rule grammar is kinclaw's — a
+tool name, a `prefix*`, or `tool(param-prefix*)` — so `bash(git push*)`
+means the same thing in both. A `bash(...)` rule is checked against
+**every simple command the shell would run**, split on `;` `&&` `||`
+`|` and newlines: without that, an allow-listed verb is a doorway for
+whatever follows it. Redirects and substitutions are never covered by a
+prefix rule. Irreversible commands reach a human even when no rule
+matches. `-yolo` skips the gate entirely.
 
 CLI flag (`-provider` / `-model`) > soul `brain:` > legacy top-level `model:` > hardcoded default. Pass `-soul` to load:
 
@@ -171,7 +191,8 @@ kincode (9MB single binary)
 │   │   ├── anthropic   # Anthropic Messages API + SSE streaming
 │   │   └── openai      # OpenAI-compatible (OpenAI/Ollama/DeepSeek/Gemini/...)
 │   ├── tools/          # 10 built-in tools
-│   │   ├── bash        # Shell execution (30s timeout, blocklist)
+│   │   ├── bash        # Shell execution (30s default, persistent cd, background tasks)
+│   │   ├── git         # Read-only: status / diff / log / show / blame
 │   │   ├── file_*      # Read, write, edit (with diff visualization)
 │   │   ├── glob/grep   # File and content search
 │   │   ├── web_*       # Fetch URLs, DuckDuckGo search
