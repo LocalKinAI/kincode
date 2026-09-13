@@ -318,7 +318,7 @@ func main() {
 	if !*yolo {
 		mode := permission.ModeAuto
 		var askRules, allowRules []string
-		if soulFM.Permissions != nil {
+		if soulFM != nil && soulFM.Permissions != nil {
 			mode = permission.Mode(soulFM.Permissions.Mode)
 			askRules, allowRules = soulFM.Permissions.Ask, soulFM.Permissions.Allow
 		}
