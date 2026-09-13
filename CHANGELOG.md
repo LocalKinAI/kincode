@@ -16,6 +16,11 @@ be wrong.
   shell drives that could edit any file and run any command without
   asking once, with a bash blocklist as the only thing between a typo
   and your home directory.
+- **kinfer's answers came back empty.** kinfer answers a stream request
+  that carries tools with one plain JSON body instead of SSE — it
+  buffers so a tool call never arrives in fragments — and the stream
+  reader skipped it as a line without `data: `: no text, no tool calls.
+  A stream answered as `application/json` is now read whole.
 
 ### Added
 

@@ -202,7 +202,13 @@ func (o *OpenAIProvider) doRequest(ctx context.Context, messages []Message, tool
 		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(b))
 	}
 
-	if stream {
+	// A server may answer a stream request with one plain JSON body.
+	// kinfer does whenever tools are on the table — it buffers the reply
+	// so a tool call never arrives in fragments — and read as SSE that
+	// body is a single line without "data: ": the turn ends with no text
+	// and no tool calls, as if the model had said nothing.
+	whole := strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json")
+	if stream && !whole {
 		return o.handleStream(resp.Body, onChunk)
 	}
 
@@ -211,7 +217,11 @@ func (o *OpenAIProvider) doRequest(ctx context.Context, messages []Message, tool
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
-	return o.convertResponse(&oResp), nil
+	result := o.convertResponse(&oResp)
+	if stream && onChunk != nil && result.Content != "" {
+		onChunk(result.Content)
+	}
+	return result, nil
 }
 
 func (o *OpenAIProvider) handleStream(body io.Reader, onChunk func(string)) (*Response, error) {
